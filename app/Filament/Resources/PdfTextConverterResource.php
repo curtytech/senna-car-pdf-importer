@@ -577,12 +577,13 @@ class PdfTextConverterResource extends Resource
         }
 
         // Números com offset; exclui os que pertencem às datas e ao percentual
-        preg_match_all('/[\d.,]+/', $line, $numbers, PREG_OFFSET_CAPTURE);
+        // ATUALIZAÇÃO: Captura números com sinal para pegar devoluções negativas
+        preg_match_all('/-?[\d.,]+/', $line, $numbers, PREG_OFFSET_CAPTURE);
         $valores = [];
         foreach ($numbers[0] as $numMatch) {
             $numStr = $numMatch[0];
             $pos = $numMatch[1];
-
+        
             // dentro de uma data?
             $inDate = false;
             foreach ($dateRanges as [$s, $e]) {
@@ -592,33 +593,40 @@ class PdfTextConverterResource extends Resource
                 }
             }
             if ($inDate) continue;
-
+        
             // dentro do percentual?
             if ($percentRange && $pos >= $percentRange[0] && $pos < $percentRange[1]) {
                 continue;
             }
-
+        
             $valor = static::converterDecimal($numStr);
             if ($valor !== null) {
                 $valores[] = $valor;
             }
         }
 
-        // Ordem EXATA do cabeçalho informado
-        if (count($valores) >= 1) $dados['lucro_reais'] = $valores[0];
-        if (count($valores) >= 3) $dados['custo_dev'] = $valores[2];
-        if (count($valores) >= 4) $dados['total'] = $valores[3];
-        if (count($valores) >= 5) $dados['total_custo'] = $valores[4];
-        if (count($valores) >= 6) $dados['vl_vnd_medio'] = $valores[5];
-        if (count($valores) >= 7) $dados['qtd'] = (int) $valores[6];
-        if (count($valores) >= 8) $dados['total_venda'] = $valores[7];
-        if (count($valores) >= 9) $dados['custo_venda'] = $valores[8];
-        if (count($valores) >= 10) $dados['total_devolucao'] = $valores[9];
-        if (count($valores) >= 11) $dados['lucro_percentual'] = $valores[10];
-        // if (count($valores) >= 11) $dados['lucro_percentual'] = $valores[10];
-        // if ($dados['lucro_percentual'] === null && count($valores) >= 11) {
-        //     $dados['lucro_percentual'] = $valores[10];
-        // }
+        // PRIORIDADE: identificar devoluções/custos negativos primeiro
+        $negativos = array_values(array_filter($valores, fn($v) => $v < 0));
+        if (isset($negativos[0])) {
+            // total_devolucao deve ser positivo no banco, usar valor absoluto
+            $dados['total_devolucao'] = abs($negativos[0]);
+        }
+        if (isset($negativos[1])) {
+            // custo_dev também como valor positivo
+            $dados['custo_dev'] = abs($negativos[1]);
+        }
+
+        // Ordem EXATA do cabeçalho informado (fallback), sem sobrescrever já preenchidos
+        if (count($valores) >= 1) $dados['lucro_reais'] = $dados['lucro_reais'] ?? $valores[0];
+        if (count($valores) >= 3 && $dados['custo_dev'] === null) $dados['custo_dev'] = $valores[2];
+        if (count($valores) >= 4) $dados['total'] = $dados['total'] ?? $valores[3];
+        if (count($valores) >= 5) $dados['total_custo'] = $dados['total_custo'] ?? $valores[4];
+        if (count($valores) >= 6) $dados['vl_vnd_medio'] = $dados['vl_vnd_medio'] ?? $valores[5];
+        if (count($valores) >= 7) $dados['qtd'] = $dados['qtd'] ?? (int) $valores[6];
+        if (count($valores) >= 8) $dados['total_venda'] = $dados['total_venda'] ?? $valores[7];
+        if (count($valores) >= 9) $dados['custo_venda'] = $dados['custo_venda'] ?? $valores[8];
+        if (count($valores) >= 10 && $dados['total_devolucao'] === null) $dados['total_devolucao'] = $valores[9];
+        if (count($valores) >= 11) $dados['lucro_percentual'] = $dados['lucro_percentual'] ?? $valores[10];
 
         return $dados;
     }
